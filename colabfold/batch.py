@@ -568,6 +568,11 @@ verbose_msa_output: bool = False,    # NEW: Print detailed MSA information
             #########################
             if "multimer" in model_type:
                 if model_num == 0 and seed_num == 0:
+                    # NEW: Save raw MSA data BEFORE multimer processing  
+                    if save_msa_analysis:
+                        temp_tag = f"{model_type}_{model_name}_seed_{seed:03d}"
+                        analyze_and_save_raw_msa(feature_dict, files, f"raw_{temp_tag}", verbose_msa_output)
+                    
                     # TODO: add pad_input_mulitmer()
                     input_features = feature_dict
                     input_features["asym_id"] = input_features["asym_id"] - input_features["asym_id"][...,0]
@@ -939,6 +944,11 @@ def build_multimer_feature(paired_msa: str) -> Dict[str, ndarray]:
 def process_multimer_features(
     features_for_chain: Dict[str, Dict[str, ndarray]],
     min_num_seq: int = 512,
+    save_msa_analysis: bool = False,
+    save_cluster_profiles: bool = False,
+    verbose_msa_output: bool = False,
+    files=None,
+    tag: str = "multimer_processing"
 ) -> Dict[str, ndarray]:
     all_chain_features = {}
     for chain_id, chain_features in features_for_chain.items():
@@ -989,8 +999,69 @@ def process_multimer_features(
     )
     np_example = feature_processing.process_final(np_example)
 
-    # Pad MSA to avoid zero-sized extra_msa.
+    # NEW: Save MSA data BEFORE pad_msa (this is the pre-split MSA)
+    if save_msa_analysis and files is not None:
+        if verbose_msa_output:
+            logger.info(f"\n🔍 Pre-split MSA Analysis for {tag}")
+            logger.info(f"Pre-split MSA shape: {np_example['msa'].shape}")
+        
+        # Save pre-split MSA
+        pre_split_msa_file = files.get(f"pre_split_msa_{tag}", "npy")
+        np.save(pre_split_msa_file, np_example['msa'])
+        logger.info(f"💾 Saved pre-split MSA: {np_example['msa'].shape}")
+        
+        # Save pre-split deletion matrix if it exists
+        if 'deletion_matrix' in np_example:
+            pre_split_del_file = files.get(f"pre_split_deletion_matrix_{tag}", "npy")
+            np.save(pre_split_del_file, np_example['deletion_matrix'])
+
+    # Pad MSA to avoid zero-sized extra_msa. THIS IS WHERE THE MAGIC HAPPENS!
     np_example = pipeline_multimer.pad_msa(np_example, min_num_seq=min_num_seq)
+    
+    # NEW: Save MSA data AFTER pad_msa (this should have main/extra split!)
+    if save_msa_analysis and files is not None:
+        if verbose_msa_output:
+            logger.info(f"\n🎯 Post-split MSA Analysis for {tag}")
+            logger.info(f"Available keys after pad_msa: {list(np_example.keys())}")
+            
+        # Check for main MSA
+        if 'msa' in np_example:
+            main_msa_shape = np_example['msa'].shape
+            if verbose_msa_output:
+                logger.info(f"Main MSA shape: {main_msa_shape}")
+            
+            # Save main MSA
+            main_msa_file = files.get(f"true_main_msa_{tag}", "npy")
+            np.save(main_msa_file, np_example['msa'])
+            logger.info(f"💾 Saved TRUE main MSA: {main_msa_shape}")
+        
+        # Check for extra MSA
+        if 'extra_msa' in np_example:
+            extra_msa_shape = np_example['extra_msa'].shape
+            if verbose_msa_output:
+                logger.info(f"Extra MSA shape: {extra_msa_shape}")
+            
+            # Save extra MSA
+            extra_msa_file = files.get(f"true_extra_msa_{tag}", "npy")
+            np.save(extra_msa_file, np_example['extra_msa'])
+            logger.info(f"💾 Saved TRUE extra MSA: {extra_msa_shape}")
+        else:
+            if verbose_msa_output:
+                logger.info("❌ No extra_msa found after pad_msa")
+        
+        # Check for cluster assignments
+        cluster_keys = ['cluster_assignment', 'extra_cluster_assignment']
+        for key in cluster_keys:
+            if key in np_example:
+                cluster_file = files.get(f"true_{key}_{tag}", "npy")
+                np.save(cluster_file, np_example[key])
+                if verbose_msa_output:
+                    logger.info(f"Saved {key}: {np_example[key].shape}")
+        
+        # Save cluster profiles if requested
+        if save_cluster_profiles:
+            save_cluster_profile_analysis(np_example, files, f"true_{tag}", verbose_msa_output)
+    
     return np_example
 
 def generate_input_feature(
@@ -1002,6 +1073,11 @@ def generate_input_feature(
     is_complex: bool,
     model_type: str,
     max_seq: int,
+    save_msa_analysis: bool = False,
+    save_cluster_profiles: bool = False,
+    verbose_msa_output: bool = False,
+    files=None,
+    tag: str = "generate_features"
 ) -> Tuple[Dict[str, Any], Dict[str, str]]:
 
     input_feature = {}
@@ -1063,7 +1139,15 @@ def generate_input_feature(
 
         if "multimer" in model_type:
             # combine features across all chains
-            input_feature = process_multimer_features(features_for_chain, min_num_seq=max_seq + 4)
+            input_feature = process_multimer_features(
+                features_for_chain, 
+                min_num_seq=max_seq + 4,
+                save_msa_analysis=save_msa_analysis,
+                save_cluster_profiles=save_cluster_profiles,
+                verbose_msa_output=verbose_msa_output,
+                files=files,
+                tag=tag
+            )
             domain_names = {
                 chain: [
                     name.decode("UTF-8")
@@ -1519,9 +1603,17 @@ def run(
         # generate features
         #######################
         try:
+            # Create file manager for MSA analysis during feature generation
+            feature_files = file_manager(jobname, result_dir) if save_msa_analysis else None
+            
             (feature_dict, domain_names) \
             = generate_input_feature(query_seqs_unique, query_seqs_cardinality, unpaired_msa, paired_msa,
-                                     template_features, is_complex, model_type, max_seq=max_seq)
+                                     template_features, is_complex, model_type, max_seq=max_seq,
+                                     save_msa_analysis=save_msa_analysis,
+                                     save_cluster_profiles=save_cluster_profiles,
+                                     verbose_msa_output=verbose_msa_output,
+                                     files=feature_files,
+                                     tag=f"feature_generation_{jobname}")
 
             # to allow display of MSA info during colab/chimera run (thanks tomgoddard)
             if feature_dict_callback is not None:
