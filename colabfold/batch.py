@@ -93,6 +93,7 @@ def analyze_and_save_msa_components(input_features, files, tag, save_cluster_pro
     if verbose_msa_output:
         logger.info(f"\n🔍 MSA Analysis for {tag}")
         logger.info(f"Total features: {len(input_features.keys())}")
+        logger.info(f"Available feature keys: {list(input_features.keys())}")
     
     # Save main MSA components
     if "msa" in input_features:
@@ -108,6 +109,7 @@ def analyze_and_save_msa_components(input_features, files, tag, save_cluster_pro
         np.save(main_msa_file, main_msa)
         logger.info(f"💾 Saved main MSA: {main_msa.shape}")
     
+    # Save extra MSA components (these should exist after process_features for multimers)
     if "extra_msa" in input_features:
         extra_msa = input_features["extra_msa"]
         if verbose_msa_output:
@@ -120,10 +122,19 @@ def analyze_and_save_msa_components(input_features, files, tag, save_cluster_pro
         extra_msa_file = files.get(f"extra_msa_{tag}", "npy")
         np.save(extra_msa_file, extra_msa)
         logger.info(f"💾 Saved extra MSA: {extra_msa.shape}")
+    else:
+        if verbose_msa_output:
+            logger.info("No extra MSA found - all sequences may be in main MSA")
     
     # Save cluster assignments and deletion matrices
     msa_components = {}
-    for key in ["cluster_assignment", "extra_cluster_assignment", "deletion_matrix", "extra_deletion_matrix"]:
+    component_keys = [
+        "cluster_assignment", "extra_cluster_assignment", 
+        "deletion_matrix", "extra_deletion_matrix",
+        "msa_mask", "extra_msa_mask"
+    ]
+    
+    for key in component_keys:
         if key in input_features and hasattr(input_features[key], 'shape'):
             component_file = files.get(f"{key}_{tag}", "npy")
             np.save(component_file, input_features[key])
@@ -140,18 +151,62 @@ def analyze_and_save_msa_components(input_features, files, tag, save_cluster_pro
         save_cluster_profile_analysis(input_features, files, tag, verbose_msa_output)
     
     # Save summary
-    if msa_components:
-        summary_file = files.get(f"msa_analysis_{tag}", "json")
-        with open(summary_file, 'w') as f:
-            summary = {
-                "tag": tag,
-                "timestamp": time.time(),
-                "main_msa_shape": list(input_features["msa"].shape) if "msa" in input_features else None,
-                "extra_msa_shape": list(input_features["extra_msa"].shape) if "extra_msa" in input_features else None,
-                "components": msa_components
+    summary_file = files.get(f"msa_analysis_{tag}", "json")
+    with open(summary_file, 'w') as f:
+        summary = {
+            "tag": tag,
+            "timestamp": time.time(),
+            "main_msa_shape": list(input_features["msa"].shape) if "msa" in input_features else None,
+            "extra_msa_shape": list(input_features["extra_msa"].shape) if "extra_msa" in input_features else None,
+            "components": msa_components,
+            "all_feature_keys": list(input_features.keys())
+        }
+        json.dump(summary, f, indent=2)
+    logger.info(f"📊 Saved MSA analysis summary for {tag}")
+
+def analyze_and_save_raw_msa(feature_dict, files, tag, verbose_msa_output=False):
+    """Analyze and save the raw MSA before AlphaFold processing"""
+    
+    if verbose_msa_output:
+        logger.info(f"\n🔍 Raw MSA Analysis for {tag}")
+        logger.info(f"Raw feature keys: {list(feature_dict.keys())}")
+    
+    # Save raw MSA data before processing
+    if "msa" in feature_dict:
+        raw_msa = feature_dict["msa"]
+        if verbose_msa_output:
+            logger.info(f"Raw MSA: {raw_msa.shape} sequences")
+        
+        raw_msa_file = files.get(f"raw_msa_{tag}", "npy")
+        np.save(raw_msa_file, raw_msa)
+        logger.info(f"💾 Saved raw MSA: {raw_msa.shape}")
+    
+    # Save other raw components
+    raw_components = {}
+    for key in ["deletion_matrix", "msa_mask", "cluster_assignment"]:
+        if key in feature_dict and hasattr(feature_dict[key], 'shape'):
+            raw_file = files.get(f"raw_{key}_{tag}", "npy")
+            np.save(raw_file, feature_dict[key])
+            raw_components[key] = {
+                "shape": list(feature_dict[key].shape),
+                "dtype": str(feature_dict[key].dtype),
+                "file": str(raw_file)
             }
-            json.dump(summary, f, indent=2)
-        logger.info(f"📊 Saved MSA analysis summary for {tag}")
+            if verbose_msa_output:
+                logger.info(f"Saved raw {key}: {feature_dict[key].shape}")
+    
+    # Save raw summary
+    raw_summary_file = files.get(f"raw_msa_analysis_{tag}", "json")
+    with open(raw_summary_file, 'w') as f:
+        summary = {
+            "tag": tag,
+            "timestamp": time.time(),
+            "raw_msa_shape": list(feature_dict["msa"].shape) if "msa" in feature_dict else None,
+            "raw_components": raw_components,
+            "all_raw_feature_keys": list(feature_dict.keys())
+        }
+        json.dump(summary, f, indent=2)
+    logger.info(f"📊 Saved raw MSA analysis summary for {tag}")
 
 def save_cluster_profile_analysis(input_features, files, tag, verbose_msa_output=False):
     """Save detailed cluster profile analysis"""
@@ -192,9 +247,18 @@ def save_cluster_profile_analysis(input_features, files, tag, verbose_msa_output
         unique_clusters = np.unique(extra_cluster_assignment)
         cluster_sizes = [np.sum(extra_cluster_assignment == cluster_id) for cluster_id in unique_clusters]
         
+        # Save extra cluster profiles too
+        extra_cluster_profiles = {}
+        for cluster_id in unique_clusters:
+            cluster_mask = extra_cluster_assignment == cluster_id
+            cluster_seqs = extra_msa[cluster_mask]
+            profile = np.mean(cluster_seqs, axis=0)
+            extra_cluster_profiles[int(cluster_id)] = profile.tolist()
+        
         cluster_analysis["extra_clusters"] = {
             "num_clusters": len(unique_clusters),
-            "cluster_sizes": cluster_sizes
+            "cluster_sizes": cluster_sizes,
+            "cluster_profiles": extra_cluster_profiles
         }
         
         if verbose_msa_output:
@@ -206,6 +270,9 @@ def save_cluster_profile_analysis(input_features, files, tag, verbose_msa_output
         with open(cluster_file, 'w') as f:
             json.dump(cluster_analysis, f, indent=2)
         logger.info(f"🧬 Saved cluster profiles for {tag}")
+    else:
+        if verbose_msa_output:
+            logger.info("No cluster assignments found for cluster profile analysis")
 
 def mk_mock_template(
     query_sequence: Union[List[str], str], num_temp: int = 1
@@ -506,6 +573,13 @@ verbose_msa_output: bool = False,    # NEW: Print detailed MSA information
                     input_features["asym_id"] = input_features["asym_id"] - input_features["asym_id"][...,0]
             else:
                 if model_num == 0:
+                    # Create temporary tag for raw analysis
+                    temp_tag = f"{model_type}_{model_name}_seed_{seed:03d}"
+                    
+                    # NEW: Save raw MSA data BEFORE processing
+                    if save_msa_analysis:
+                        analyze_and_save_raw_msa(feature_dict, files, f"raw_{temp_tag}", verbose_msa_output)
+                    
                     input_features = model_runner.process_features(feature_dict, random_seed=seed)
                     r = input_features["aatype"].shape[0]
                     input_features["asym_id"] = np.tile(feature_dict["asym_id"],r).reshape(r,-1)
@@ -558,9 +632,14 @@ verbose_msa_output: bool = False,    # NEW: Print detailed MSA information
                 callback=callback)
             
             # NEW: MSA Analysis functionality for research
-            if save_msa_analysis and "multimer" in model_type:
-                analyze_and_save_msa_components(input_features, files, tag, 
-                                              save_cluster_profiles, verbose_msa_output)
+            if save_msa_analysis:
+                if "multimer" in model_type:
+                    analyze_and_save_msa_components(input_features, files, tag, 
+                                                  save_cluster_profiles, verbose_msa_output)
+                else:
+                    # For non-multimer models, also analyze processed features
+                    analyze_and_save_msa_components(input_features, files, tag, 
+                                                  save_cluster_profiles, verbose_msa_output)
 
             if calc_extra_ptm and 'predicted_aligned_error' in result.keys():
                 extra_ptm_output = extra_ptm.get_chain_and_interface_metrics(result, input_features['asym_id'],
@@ -2161,7 +2240,7 @@ def main():
         use_probs_extra=use_probs_extra,
         save_msa_analysis=args.save_msa_components,  # NEW: Save MSA components for research
         save_cluster_profiles=args.save_master_msa,  # NEW: Save cluster profiles and stats
-        verbose_msa_output=False,                    # NEW: Print detailed MSA information
+        verbose_msa_output=args.save_msa_components,  # NEW: Print detailed MSA information when analysis is enabled
     )
 
 if __name__ == "__main__":
