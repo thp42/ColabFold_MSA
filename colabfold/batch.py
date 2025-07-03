@@ -86,6 +86,127 @@ import jax.numpy as jnp
 logging.getLogger('jax._src.xla_bridge').addFilter(lambda _: False) # jax >=0.4.6
 logging.getLogger('jax._src.lib.xla_bridge').addFilter(lambda _: False) # jax < 0.4.5
 
+def analyze_and_save_msa_components(input_features, files, tag, save_cluster_profiles=False, verbose_msa_output=False):
+    """Analyze and save MSA components for research"""
+    
+    # Basic MSA information
+    if verbose_msa_output:
+        logger.info(f"\n🔍 MSA Analysis for {tag}")
+        logger.info(f"Total features: {len(input_features.keys())}")
+    
+    # Save main MSA components
+    if "msa" in input_features:
+        main_msa = input_features["msa"]
+        if verbose_msa_output:
+            logger.info(f"Main MSA: {main_msa.shape} sequences")
+            # Calculate diversity
+            diversity = np.sum(np.var(main_msa.astype(float), axis=0), axis=1)
+            logger.info(f"Main MSA diversity: {np.mean(diversity):.3f}")
+        
+        # Save main MSA
+        main_msa_file = files.get(f"main_msa_{tag}", "npy")
+        np.save(main_msa_file, main_msa)
+        logger.info(f"💾 Saved main MSA: {main_msa.shape}")
+    
+    if "extra_msa" in input_features:
+        extra_msa = input_features["extra_msa"]
+        if verbose_msa_output:
+            logger.info(f"Extra MSA: {extra_msa.shape} sequences")
+            # Calculate diversity
+            diversity = np.sum(np.var(extra_msa.astype(float), axis=0), axis=1)
+            logger.info(f"Extra MSA diversity: {np.mean(diversity):.3f}")
+        
+        # Save extra MSA
+        extra_msa_file = files.get(f"extra_msa_{tag}", "npy")
+        np.save(extra_msa_file, extra_msa)
+        logger.info(f"💾 Saved extra MSA: {extra_msa.shape}")
+    
+    # Save cluster assignments and deletion matrices
+    msa_components = {}
+    for key in ["cluster_assignment", "extra_cluster_assignment", "deletion_matrix", "extra_deletion_matrix"]:
+        if key in input_features and hasattr(input_features[key], 'shape'):
+            component_file = files.get(f"{key}_{tag}", "npy")
+            np.save(component_file, input_features[key])
+            msa_components[key] = {
+                "shape": list(input_features[key].shape),
+                "dtype": str(input_features[key].dtype),
+                "file": str(component_file)
+            }
+            if verbose_msa_output:
+                logger.info(f"Saved {key}: {input_features[key].shape}")
+    
+    # Save cluster profiles if requested
+    if save_cluster_profiles:
+        save_cluster_profile_analysis(input_features, files, tag, verbose_msa_output)
+    
+    # Save summary
+    if msa_components:
+        summary_file = files.get(f"msa_analysis_{tag}", "json")
+        with open(summary_file, 'w') as f:
+            summary = {
+                "tag": tag,
+                "timestamp": time.time(),
+                "main_msa_shape": list(input_features["msa"].shape) if "msa" in input_features else None,
+                "extra_msa_shape": list(input_features["extra_msa"].shape) if "extra_msa" in input_features else None,
+                "components": msa_components
+            }
+            json.dump(summary, f, indent=2)
+        logger.info(f"📊 Saved MSA analysis summary for {tag}")
+
+def save_cluster_profile_analysis(input_features, files, tag, verbose_msa_output=False):
+    """Save detailed cluster profile analysis"""
+    
+    cluster_analysis = {}
+    
+    # Analyze main MSA clusters
+    if "msa" in input_features and "cluster_assignment" in input_features:
+        main_msa = input_features["msa"]
+        cluster_assignment = input_features["cluster_assignment"]
+        
+        unique_clusters = np.unique(cluster_assignment)
+        cluster_sizes = [np.sum(cluster_assignment == cluster_id) for cluster_id in unique_clusters]
+        
+        # Calculate cluster profiles (amino acid frequencies)
+        cluster_profiles = {}
+        for cluster_id in unique_clusters:
+            cluster_mask = cluster_assignment == cluster_id
+            cluster_seqs = main_msa[cluster_mask]
+            # Calculate amino acid frequencies for this cluster
+            profile = np.mean(cluster_seqs, axis=0)  # Average over sequences in cluster
+            cluster_profiles[int(cluster_id)] = profile.tolist()
+        
+        cluster_analysis["main_clusters"] = {
+            "num_clusters": len(unique_clusters),
+            "cluster_sizes": cluster_sizes,
+            "cluster_profiles": cluster_profiles
+        }
+        
+        if verbose_msa_output:
+            logger.info(f"Main MSA: {len(unique_clusters)} clusters, sizes: {cluster_sizes[:10]}...")
+    
+    # Analyze extra MSA clusters
+    if "extra_msa" in input_features and "extra_cluster_assignment" in input_features:
+        extra_msa = input_features["extra_msa"]
+        extra_cluster_assignment = input_features["extra_cluster_assignment"]
+        
+        unique_clusters = np.unique(extra_cluster_assignment)
+        cluster_sizes = [np.sum(extra_cluster_assignment == cluster_id) for cluster_id in unique_clusters]
+        
+        cluster_analysis["extra_clusters"] = {
+            "num_clusters": len(unique_clusters),
+            "cluster_sizes": cluster_sizes
+        }
+        
+        if verbose_msa_output:
+            logger.info(f"Extra MSA: {len(unique_clusters)} clusters, sizes: {cluster_sizes[:10]}...")
+    
+    # Save cluster analysis
+    if cluster_analysis:
+        cluster_file = files.get(f"cluster_profiles_{tag}", "json")
+        with open(cluster_file, 'w') as f:
+            json.dump(cluster_analysis, f, indent=2)
+        logger.info(f"🧬 Saved cluster profiles for {tag}")
+
 def mk_mock_template(
     query_sequence: Union[List[str], str], num_temp: int = 1
 ) -> Dict[str, Any]:
@@ -351,8 +472,11 @@ def predict_structure(
     save_single_representations: bool = False,
     save_pair_representations: bool = False,
     save_recycles: bool = False,
-    calc_extra_ptm: bool = False,
-    use_probs_extra: bool = True,
+calc_extra_ptm: bool = False,
+use_probs_extra: bool = True,
+save_msa_analysis: bool = False,     # NEW: Save MSA components for research
+save_cluster_profiles: bool = False,  # NEW: Save cluster profiles and stats
+verbose_msa_output: bool = False,    # NEW: Print detailed MSA information
 ):
     """Predicts structure using AlphaFold for the given sequence."""
     mean_scores = []
@@ -432,6 +556,11 @@ def predict_structure(
                 random_seed=seed,
                 return_representations=return_representations,
                 callback=callback)
+            
+            # NEW: MSA Analysis functionality for research
+            if save_msa_analysis and "multimer" in model_type:
+                analyze_and_save_msa_components(input_features, files, tag, 
+                                              save_cluster_profiles, verbose_msa_output)
 
             if calc_extra_ptm and 'predicted_aligned_error' in result.keys():
                 extra_ptm_output = extra_ptm.get_chain_and_interface_metrics(result, input_features['asym_id'],
@@ -1078,6 +1207,9 @@ def run(
     feature_dict_callback: Callable[[Any], Any] = None,
     calc_extra_ptm: bool = False,
     use_probs_extra: bool = True,
+    save_msa_analysis: bool = False,     # NEW: Save MSA components for research
+    save_cluster_profiles: bool = False,  # NEW: Save cluster profiles and stats
+    verbose_msa_output: bool = False,    # NEW: Print detailed MSA information
     **kwargs
 ):
     # check what device is available
@@ -1213,6 +1345,8 @@ def run(
         "version": importlib_metadata.version("colabfold"),
         "calc_extra_ptm": calc_extra_ptm,
         "use_probs_extra": use_probs_extra,
+        "save_msa_components": save_msa_components,  # NEW: Save main/extra MSA components
+        "save_master_msa": save_master_msa,      # NEW: Save master MSA before splitting
     }
     config_out_file = result_dir.joinpath("config.json")
     config_out_file.write_text(json.dumps(config, indent=4))
@@ -1421,6 +1555,9 @@ def run(
                     save_recycles=save_recycles,
                     calc_extra_ptm=calc_extra_ptm,
                     use_probs_extra=use_probs_extra,
+                    save_msa_analysis=save_msa_analysis,      # NEW: Save MSA components for research
+                    save_cluster_profiles=save_cluster_profiles,  # NEW: Save cluster profiles and stats
+                    verbose_msa_output=verbose_msa_output,        # NEW: Print detailed MSA information
                 )
                 
                 result_files += results["result_files"]
@@ -2009,6 +2146,8 @@ def main():
         save_recycles=args.save_recycles,
         calc_extra_ptm=args.calc_extra_ptm,
         use_probs_extra=use_probs_extra,
+        save_msa_components=args.save_msa_components,  # NEW: Save main/extra MSA components
+        save_master_msa=args.save_master_msa,      # NEW: Save master MSA before splitting
     )
 
 if __name__ == "__main__":
