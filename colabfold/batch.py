@@ -99,8 +99,8 @@ def analyze_and_save_msa_components(input_features, files, tag, save_cluster_pro
         main_msa = input_features["msa"]
         if verbose_msa_output:
             logger.info(f"Main MSA: {main_msa.shape} sequences")
-            # Calculate diversity
-            diversity = np.sum(np.var(main_msa.astype(float), axis=0), axis=1)
+            # Calculate diversity (variance across sequences for each position)
+            diversity = np.var(main_msa.astype(float), axis=0)
             logger.info(f"Main MSA diversity: {np.mean(diversity):.3f}")
         
         # Save main MSA
@@ -112,8 +112,8 @@ def analyze_and_save_msa_components(input_features, files, tag, save_cluster_pro
         extra_msa = input_features["extra_msa"]
         if verbose_msa_output:
             logger.info(f"Extra MSA: {extra_msa.shape} sequences")
-            # Calculate diversity
-            diversity = np.sum(np.var(extra_msa.astype(float), axis=0), axis=1)
+            # Calculate diversity (variance across sequences for each position)
+            diversity = np.var(extra_msa.astype(float), axis=0)
             logger.info(f"Extra MSA diversity: {np.mean(diversity):.3f}")
         
         # Save extra MSA
