@@ -1345,8 +1345,9 @@ def run(
         "version": importlib_metadata.version("colabfold"),
         "calc_extra_ptm": calc_extra_ptm,
         "use_probs_extra": use_probs_extra,
-        "save_msa_components": save_msa_components,  # NEW: Save main/extra MSA components
-        "save_master_msa": save_master_msa,      # NEW: Save master MSA before splitting
+        "save_msa_analysis": save_msa_analysis,     # NEW: Save MSA components for research
+        "save_cluster_profiles": save_cluster_profiles,  # NEW: Save cluster profiles and stats
+        "verbose_msa_output": verbose_msa_output,        # NEW: Print detailed MSA information
     }
     config_out_file = result_dir.joinpath("config.json")
     config_out_file.write_text(json.dumps(config, indent=4))
@@ -2002,6 +2003,18 @@ def main():
         default="length",
         choices=["none", "length", "random"],
     )
+    output_group.add_argument(
+        "--save-msa-components",
+        default=False,
+        action="store_true",
+        help="Save MSA components for research analysis.",
+    )
+    output_group.add_argument(
+        "--save-master-msa",
+        default=False,
+        action="store_true",
+        help="Save master MSA before splitting for research analysis.",
+    )
 
     adv_group = parser.add_argument_group(
         "Advanced arguments", ""
@@ -2146,8 +2159,9 @@ def main():
         save_recycles=args.save_recycles,
         calc_extra_ptm=args.calc_extra_ptm,
         use_probs_extra=use_probs_extra,
-        save_msa_components=args.save_msa_components,  # NEW: Save main/extra MSA components
-        save_master_msa=args.save_master_msa,      # NEW: Save master MSA before splitting
+        save_msa_analysis=args.save_msa_components,  # NEW: Save MSA components for research
+        save_cluster_profiles=args.save_master_msa,  # NEW: Save cluster profiles and stats
+        verbose_msa_output=False,                    # NEW: Print detailed MSA information
     )
 
 if __name__ == "__main__":
