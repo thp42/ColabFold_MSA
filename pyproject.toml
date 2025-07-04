@@ -48,8 +48,8 @@ jupyter = "^1.0.0"
 pytest = "^6.2.5"
 
 [tool.poetry.extras]
-alphafold = ["alphafold-colabfold", "jax"]
-alphafold-minus-jax = ["alphafold-colabfold"]
+alphafold = ["colabfold_msa", "alphafold_msa", "jax"]
+alphafold-minus-jax = ["colabfold_msa", "alphafold_msa"]
 
 [tool.pytest.ini_options]
 addopts = "--tb=short"
