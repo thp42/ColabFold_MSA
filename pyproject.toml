@@ -30,8 +30,7 @@ numpy = "^2.0.2"
 pandas = "^2.2.2"
 #alphafold-colabfold = { version = "v2.3.8", optional = true }
 # Add the Git repositories instead:
-alphafold_msa = { git = "https://github.com/thp42/AlphaFold_MSA.git", branch = "main", optional = true }
-colabfold_msa = { git = "https://github.com/thp42/ColabFold_MSA.git", branch = "main", optional = true }
+alphafold-colabfold = { git = "https://github.com/thp42/AlphaFold_MSA.git", branch = "main", optional = true }
 #alphafold-colabfold = { path = "../alphafold", develop = true, optional = true }
 requests = "^2.26.0"
 tqdm = "^4.62.2"
