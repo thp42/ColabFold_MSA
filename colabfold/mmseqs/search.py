@@ -68,6 +68,10 @@ def mmseqs_search_monomer(
     gpu: int = 0,
     gpu_server: int = 0,
     unpack: bool = True,
+    search_eval: float = 1.0, #change
+    max_seqs: int = 25000,    #change
+    min_coverage: float = 0.3,   #change
+    qsc_filter: float = 0.5,    #change
 ):
     """Run mmseqs with a local colabfold database set
 
@@ -79,7 +83,7 @@ def mmseqs_search_monomer(
         # 0.1 was not used in benchmarks due to POSIX shell bug in line above
         #  EXPAND_EVAL=0.1
         align_eval = 10
-        qsc = 0.8
+        qsc = str(qsc_filter)
         max_accept = 100000
 
     used_dbs = [uniref_db]
@@ -108,7 +112,7 @@ def mmseqs_search_monomer(
             dbSuffix2 = ".idx"
             dbSuffix3 = ".idx"
 
-    search_param = ["--num-iterations", "3", "--db-load-mode", str(db_load_mode), "-a", "-e", "0.1", "--max-seqs", "10000"]
+    search_param = ["--num-iterations", "3", "--db-load-mode", str(db_load_mode), "-a", "-e", str(search_eval), "--max-seqs", str(max_seqs)]
     if gpu:
         search_param += ["--gpu", str(gpu), "--prefilter-mode", "1"] # gpu version only supports ungapped prefilter currently
     else:
@@ -220,6 +224,10 @@ def mmseqs_search_pair(
     db_load_mode: int = 2,
     pairing_strategy: int = 0,
     unpack: bool = True,
+    search_eval: float = 1.0, #change
+    max_seqs: int = 25000,    #change
+    min_coverage: float = 0.3,   #change
+    qsc_filter: float = 0.5,    #change
 ):
     if not dbbase.joinpath(f"{uniref_db}.dbtype").is_file():
         raise FileNotFoundError(f"Database {uniref_db} does not exist")
@@ -247,7 +255,7 @@ def mmseqs_search_pair(
 
     # fmt: off
     # @formatter:off
-    search_param = ["--num-iterations", "3", "--db-load-mode", str(db_load_mode), "-a", "-e", "0.1", "--max-seqs", "10000",]
+    search_param = ["--num-iterations", "3", "--db-load-mode", str(db_load_mode), "-a", "-e", str(search_eval), "--max-seqs", str(max_seqs),]
     if gpu:
         search_param += ["--gpu", str(gpu), "--prefilter-mode", "1"] # gpu version only supports ungapped prefilter currently
     else:
@@ -261,7 +269,7 @@ def mmseqs_search_pair(
     expand_param = ["--expansion-mode", "0", "-e", "inf", "--expand-filter-clusters", "0", "--max-seq-id", "0.95",]
     run_mmseqs(mmseqs, ["search", base.joinpath("qdb"), dbbase.joinpath(db), base.joinpath("res"), base.joinpath("tmp"), "--threads", str(threads),] + search_param,)
     run_mmseqs(mmseqs, ["expandaln", base.joinpath("qdb"), dbbase.joinpath(f"{db}{dbSuffix1}"), base.joinpath("res"), dbbase.joinpath(f"{db}{dbSuffix2}"), base.joinpath("res_exp"), "--db-load-mode", str(db_load_mode), "--threads", str(threads),] + expand_param,)
-    run_mmseqs(mmseqs, ["align", base.joinpath("qdb"), dbbase.joinpath(f"{db}{dbSuffix1}"), base.joinpath("res_exp"), base.joinpath("res_exp_realign"), "--db-load-mode", str(db_load_mode), "-e", "0.001", "--max-accept", "1000000", "--threads", str(threads), "-c", "0.5", "--cov-mode", "1",],)
+    run_mmseqs(mmseqs, ["align", base.joinpath("qdb"), dbbase.joinpath(f"{db}{dbSuffix1}"), base.joinpath("res_exp"), base.joinpath("res_exp_realign"), "--db-load-mode", str(db_load_mode), "-e", "0.001", "--max-accept", "1000000", "--threads", str(threads), "-c", str(min_coverage), "--cov-mode", "1",],)
     run_mmseqs(mmseqs, ["pairaln", base.joinpath("qdb"), dbbase.joinpath(f"{db}"), base.joinpath("res_exp_realign"), base.joinpath("res_exp_realign_pair"), "--db-load-mode", str(db_load_mode), "--pairing-mode", str(pairing_strategy), "--pairing-dummy-mode", "0", "--threads", str(threads), ],)
     run_mmseqs(mmseqs, ["align", base.joinpath("qdb"), dbbase.joinpath(f"{db}{dbSuffix1}"), base.joinpath("res_exp_realign_pair"), base.joinpath("res_exp_realign_pair_bt"), "--db-load-mode", str(db_load_mode), "-e", "inf", "-a", "--threads", str(threads), ],)
     run_mmseqs(mmseqs, ["pairaln", base.joinpath("qdb"), dbbase.joinpath(f"{db}"), base.joinpath("res_exp_realign_pair_bt"), base.joinpath("res_final"), "--db-load-mode", str(db_load_mode), "--pairing-mode", str(pairing_strategy), "--pairing-dummy-mode", "1", "--threads", str(threads),],)
@@ -394,7 +402,19 @@ def main():
     parser.add_argument(
         "--gpu-server", type=int, default=0, choices=[0, 1], help="Whether to use GPU server (1) or not (0)"
     )
-
+    parser.add_argument(
+        "--search-eval", type=float, default=1.0, help="mmseqs search e-value"
+    )
+    parser.add_argument(
+        "--max-seqs", type=int, default=25000, help="mmseqs search max sequences"
+    )
+    parser.add_argument(
+        "--min-coverage", type=float, default=0.3, help="Minimum coverage for pairing"
+    )
+    parser.add_argument(
+        "--qsc-filter", type=float, default=0.5, help="QSC filter value when --filter is enabled"
+    )
+    
     # AlphaFold3 relevant params
     parser.add_argument(
         "--af3-json", action="store_true", help="Generate input JSON for AlphaFold3 from the provided FASTA/A3M file."
@@ -480,6 +500,10 @@ def main():
         gpu=args.gpu,
         gpu_server=args.gpu_server,
         unpack=args.unpack,
+        search_eval=args.search_eval, #change
+        max_seqs=args.max_seqs,    #change
+        min_coverage=args.min_coverage,   #change
+        qsc_filter=args.qsc_filter,    #change
     )
     if is_complex is True:
         mmseqs_search_pair(
@@ -496,6 +520,10 @@ def main():
             pairing_strategy=args.pairing_strategy,
             pair_env=False,
             unpack=args.unpack,
+            search_eval=args.search_eval, #change
+            max_seqs=args.max_seqs,    #change
+            min_coverage=args.min_coverage,   #change
+            qsc_filter=args.qsc_filter,    #change
         )
         if args.use_env_pairing:
             mmseqs_search_pair(
@@ -513,6 +541,10 @@ def main():
                 pairing_strategy=args.pairing_strategy,
                 pair_env=True,
                 unpack=args.unpack,
+                search_eval=args.search_eval, #change
+                max_seqs=args.max_seqs,    #change
+                min_coverage=args.min_coverage,   #change
+                qsc_filter=args.qsc_filter,    #change
             )
 
         if args.unpack | args.af3_json:
